@@ -656,7 +656,7 @@ const FIREBASE_URL_KEY = 'mrms_firebase_url';
 let firebasePushTimer = null;
 let firebasePollTimer = null;
 let firebaseSyncing = false;
-function getFirebaseUrl(){ return (localStorage.getItem(FIREBASE_URL_KEY)||'').trim().replace(/\/+$/,''); }
+function getFirebaseUrl(){ return "https://dhm-04251-default-rtdb.asia-southeast1.firebasedatabase.app"; }
 function setFirebaseUrl(url){
   url = (url||'').trim().replace(/\/+$/,'');
   if(url) localStorage.setItem(FIREBASE_URL_KEY, url);
