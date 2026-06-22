@@ -612,13 +612,15 @@ function defaultDB(){
       adminPassword:'admin123',
       adminPin:'1234'
     },
-    prevRanks:{}
+    prevRanks:{},
+    lastModified: 0
   };
 }
 let db = loadDB();
 function normalizeDB(parsed){
   if(!parsed.teams || !parsed.settings) return null;
   if(!parsed.settings.adminPin) parsed.settings.adminPin = '1234';
+  if(!parsed.lastModified) parsed.lastModified = 0;
   (parsed.participants||[]).forEach(p=>{
     if(!p.programIds){ p.programIds = p.programId ? [p.programId] : []; }
     if(p.cls===undefined || p.cls===null) p.cls='';
@@ -643,6 +645,7 @@ function loadDB(){
   }catch(e){ return defaultDB(); }
 }
 function saveDB(){
+  db.lastModified = Date.now();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   queueFirebasePush();
 }
@@ -669,35 +672,39 @@ function queueFirebasePush(){
 }
 async function pushToFirebase(){
   const url = getFirebaseUrl();
-  if(!url) return;
+  if(!url) return false;
   try{
-    await fetch(url+'/meeladunnabi.json', {
+    const res = await fetch(url+'/meeladunnabi.json', {
       method:'PUT',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify(db)
     });
+    if(!res.ok){ setSyncStatus('error'); return false; }
     setSyncStatus('synced');
-  }catch(e){ setSyncStatus('error'); }
+    return true;
+  }catch(e){ setSyncStatus('error'); return false; }
 }
 async function fetchFromFirebase(silent){
   const url = getFirebaseUrl();
-  if(!url) return;
+  if(!url) return false;
   try{
     const res = await fetch(url+'/meeladunnabi.json');
+    if(!res.ok){ setSyncStatus('error'); return false; }
     const data = await res.json();
-    if(!data){ setSyncStatus('synced'); return; }
+    if(!data){ setSyncStatus('synced'); return true; }
     const normalized = normalizeDB(data);
-    if(!normalized) return;
-    const incoming = JSON.stringify(normalized);
-    const current = JSON.stringify(db);
-    if(incoming!==current){
-      db = normalized;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-      refreshCurrentView();
-      if(!silent) toast('🔄 Synced latest data');
-    }
+    if(!normalized){ setSyncStatus('synced'); return true; }
+    // KEY FIX: only overwrite local data if Firebase has NEWER data
+    const incomingTime = normalized.lastModified || 0;
+    const localTime = db.lastModified || 0;
+    if(incomingTime <= localTime){ setSyncStatus('synced'); return true; }
+    db = normalized;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    refreshCurrentView();
+    if(!silent) toast('🔄 Synced latest data');
     setSyncStatus('synced');
-  }catch(e){ setSyncStatus('error'); }
+    return true;
+  }catch(e){ setSyncStatus('error'); return false; }
 }
 function refreshCurrentView(){
   if(document.getElementById('modalBg').classList.contains('show')) return;
@@ -728,10 +735,11 @@ function saveFirebaseUrlFromInput(){
   toast(url ? 'Live sync enabled' : 'Live sync disabled');
   renderSettingsView();
 }
-function forceSyncNow(){
+async function forceSyncNow(){
   if(!getFirebaseUrl()){ toast('Set up the Firebase URL first'); return; }
-  pushToFirebase();
-  toast('Pushed current data to all devices');
+  toast('Syncing...');
+  const ok = await pushToFirebase();
+  toast(ok ? '✅ Pushed current data to all devices' : '⚠️ Push failed — check Firebase URL & Rules');
 }
 
 let isAdmin = sessionStorage.getItem('mrms_admin') === '1';
@@ -847,12 +855,19 @@ function startSpotlight(elId){
 }
 
 /* ===================== HOME ===================== */
+function updateHomeStats(){
+  const sP = document.getElementById('stProg');
+  const sPa = document.getElementById('stPart');
+  const sT = document.getElementById('stTeam');
+  const sC = document.getElementById('stCat');
+  if(sP) sP.textContent = db.programs.length;
+  if(sPa) sPa.textContent = db.participants.length;
+  if(sT) sT.textContent = db.teams.length;
+  if(sC) sC.textContent = AGES.length;
+}
 function renderHome(){
   recalcTeamPoints(); saveDB();
-  document.getElementById('stProg').textContent = db.programs.length;
-  document.getElementById('stPart').textContent = db.participants.length;
-  document.getElementById('stTeam').textContent = db.teams.length;
-  document.getElementById('stCat').textContent = AGES.length;
+  updateHomeStats();
 
   startSpotlight('homeSpotlight');
 
@@ -1467,7 +1482,7 @@ function saveTeam(id){
   const data = {name, symbol:document.getElementById('mTeamSym').value||'🛡️', color:document.getElementById('mTeamColor').value, captain:document.getElementById('mTeamCaptain').value.trim()};
   if(id){ const t=db.teams.find(x=>x.id===id); Object.assign(t,data); }
   else { db.teams.push({id:uid(), points:0, ...data}); }
-  saveDB(); closeModal(); renderAdminTab(); toast('Team saved');
+  saveDB(); updateHomeStats(); closeModal(); renderAdminTab(); toast('Team saved');
 }
 let deleteArmed = {};
 function deleteTeam(id){
@@ -1551,7 +1566,7 @@ function saveProgram(id){
   const data = {code,name,description:document.getElementById('mProgDesc').value.trim(),duration:document.getElementById('mProgDur').value.trim(),maxParticipants:+document.getElementById('mProgMax').value||null,single:document.getElementById('mProgSingle').checked,group:document.getElementById('mProgGroup').checked,categories:cats};
   if(id){ const p=db.programs.find(x=>x.id===id); Object.assign(p,data); }
   else { db.programs.push({id:uid(), ...data}); }
-  saveDB(); closeModal(); renderAdminTab(); toast('Program saved');
+  saveDB(); updateHomeStats(); closeModal(); renderAdminTab(); toast('Program saved');
 }
 function deleteProgram(id){
   if(!deleteArmed[id]){ deleteArmed[id]=true; toast('Tap delete again to confirm'); setTimeout(()=>deleteArmed[id]=false,2500); return; }
@@ -1631,7 +1646,7 @@ function saveParticipant(id){
   const data = {number:document.getElementById('mPaNum').value.trim(),name,cls,division,teamId:document.getElementById('mPaTeam').value||null,gender:document.getElementById('mPaGender').value,age:classToAge(cls),programIds};
   if(id){ const pa=db.participants.find(x=>x.id===id); Object.assign(pa,data); }
   else { db.participants.push({id:uid(), ...data}); }
-  saveDB(); closeModal(); renderAdminTab(); toast('Participant saved');
+  saveDB(); updateHomeStats(); closeModal(); renderAdminTab(); toast('Participant saved');
 }
 function deleteParticipant(id){
   if(!deleteArmed[id]){ deleteArmed[id]=true; toast('Tap delete again to confirm'); setTimeout(()=>deleteArmed[id]=false,2500); return; }
@@ -1825,7 +1840,7 @@ function saveResult(id){
   const data = {programId, gender, age, winners, grades, datetime: id? db.results.find(x=>x.id===id).datetime : new Date().toISOString()};
   if(id){ const r=db.results.find(x=>x.id===id); Object.assign(r,data); }
   else { db.results.push({id:uid(), ...data}); }
-  saveDB(); closeModal(); renderAdminTab(); toast('Result saved');
+  saveDB(); updateHomeStats(); closeModal(); renderAdminTab(); toast('Result saved');
 }
 function deleteResult(id){
   if(!deleteArmed[id]){ deleteArmed[id]=true; toast('Tap delete again to confirm'); setTimeout(()=>deleteArmed[id]=false,2500); return; }
@@ -1845,4 +1860,3 @@ if(getFirebaseUrl()) startFirebaseSync();
 </script>
 </body>
 </html>
-
