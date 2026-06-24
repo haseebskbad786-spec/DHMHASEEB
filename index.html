@@ -653,10 +653,11 @@ function uid(){ return Math.random().toString(36).slice(2,10)+Date.now().toStrin
 
 /* ===================== LIVE SYNC (FIREBASE REALTIME DATABASE) ===================== */
 const FIREBASE_URL_KEY = 'mrms_firebase_url';
+const HARDCODED_FIREBASE_URL = 'https://dhm-04251-default-rtdb.asia-southeast1.firebasedatabase.app';
 let firebasePushTimer = null;
 let firebasePollTimer = null;
 let firebaseSyncing = false;
-function getFirebaseUrl(){ return "https://dhm-04251-default-rtdb.asia-southeast1.firebasedatabase.app"; }
+function getFirebaseUrl(){ return HARDCODED_FIREBASE_URL; }
 function setFirebaseUrl(url){
   url = (url||'').trim().replace(/\/+$/,'');
   if(url) localStorage.setItem(FIREBASE_URL_KEY, url);
@@ -1856,7 +1857,7 @@ function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&am
 /* ===================== INIT ===================== */
 if(isAdmin) document.getElementById('drawerUserTag').textContent='Administrator';
 showView('home');
-if(getFirebaseUrl()) startFirebaseSync();
+startFirebaseSync();
 </script>
 </body>
 </html>
